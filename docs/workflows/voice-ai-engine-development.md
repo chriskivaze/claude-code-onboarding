@@ -1,0 +1,283 @@
+# Voice AI Engine Development Workflow
+
+Build a production-ready real-time conversational voice AI engine using Gemini Live API (STT), Gemini TTS (synthesis), and a LangGraph or ADK agent — all wired together via an async worker pipeline with full interrupt support.
+
+**Skill:** `.claude/skills/voice-ai-engine-development/SKILL.md`
+
+**Iron Law:** Every component runs in its own `asyncio.Queue`-based worker. No direct method calls between workers. Interrupt handling is wired before any other feature.
+
+---
+
+## Phase 1: Setup
+
+**Goal:** Working Python project with all dependencies installed.
+
+```bash
+uv init voice-engine && cd voice-engine
+uv add "google-genai>=1.0.0" "fastapi>=0.128.0" "uvicorn[standard]" \
+  "websockets>=13.0" pydantic pydantic-settings structlog \
+  "langgraph>=1.0.7" "langchain-core>=1.2.8" \
+  "google-adk>=1.0.0" pydub numpy aiolimiter
+uv add --dev pytest pytest-asyncio httpx ruff mypy
+```
+
+**Create `.env`:**
+```bash
+GEMINI_API_KEY=your-api-key-here
+GEMINI_LIVE_MODEL=gemini-live-2.5-flash-native-audio
+GEMINI_TTS_MODEL=gemini-2.5-flash-tts-preview
+GEMINI_TTS_VOICE=Aoede
+```
+
+**Create `src/config.py`** — pydantic-settings, load from `.env`, fail fast on missing vars.
+
+**Verification gate:** `python -c "from google import genai; print('SDK OK')"` succeeds.
+
+**Common mistake:** Installing `google-generativeai` instead of `google-genai`. See `reference/common-pitfalls.md` §1.
+
+---
+
+## Phase 2: BaseWorker Pattern
+
+**Goal:** Abstract `BaseWorker`, `BaseTranscriber`, `BaseAgent`, `BaseSynthesizer` classes.
+
+**Files to create:**
+- `src/workers/base.py` — `BaseWorker` with `asyncio.Queue`, `start()`, `_run_loop()`, `terminate()`
+- `src/workers/transcriber_base.py` — adds `send_audio()`, `mute()`, `unmute()`
+- `src/workers/agent_base.py` — adds `ConversationHistory`, `cancel_current_task()`
+- `src/workers/synthesizer_base.py` — adds `SynthesisResult`, `ChunkResult`
+
+**Reference:** `reference/worker-pipeline.md` § Abstract Base Classes
+
+**Unit test:** Subclass `BaseWorker` with a mock `process()` method. Verify `start()` creates a task, items flow from input to output queue, `terminate()` stops the loop cleanly.
+
+**Verification gate:** Tests pass. `BaseWorker` is never instantiated directly.
+
+---
+
+## Phase 3: Gemini STT Worker
+
+**Goal:** `GeminiTranscriberWorker` that streams PCM audio to Gemini Live API and produces `Transcription` objects.
+
+**File:** `src/workers/gemini_transcriber.py`
+
+**Key decisions:**
+- Model: `gemini-live-2.5-flash-native-audio`
+- Protocol: WebSocket (`client.aio.live.connect()`) — never HTTP polling
+- Audio MIME type: `audio/pcm;rate=16000`
+- Concurrent sender + receiver tasks via `asyncio.create_task()`
+- Reconnect on session timeout (see `reference/gemini-provider-setup.md` § Session Timeout)
+
+**Reference:** `reference/worker-pipeline.md` § GeminiTranscriberWorker, `reference/gemini-provider-setup.md` § Live API WebSocket Setup
+
+**Unit test:** Mock the Gemini Live session. Send a fake audio chunk. Verify a `Transcription` appears in the output queue.
+
+**Verification gate:** Worker connects to Gemini Live, sends audio, receives transcription. Mute/unmute flips correctly.
+
+---
+
+## Phase 4: Gemini TTS Worker
+
+**Goal:** `GeminiSynthesizerWorker` that converts agent text to PCM audio chunks.
+
+**File:** `src/workers/gemini_synthesizer.py`
+
+**Key decisions:**
+- Model: `gemini-2.5-flash-tts-preview` (default) or `gemini-2.5-pro-tts-preview` (high fidelity)
+- Voice: `Aoede` (default) — see `reference/gemini-provider-setup.md` for full list
+- Output: 24kHz mono 16-bit PCM, chunked at 4096 bytes (~85ms per chunk)
+- `get_message_up_to(seconds)` function built from character-to-time mapping — required for interrupt partial message tracking
+
+**Reference:** `reference/worker-pipeline.md` § GeminiSynthesizerWorker, `reference/gemini-provider-setup.md` § Basic TTS Request
+
+**Unit test:** Mock `client.aio.models.generate_content`. Verify `SynthesisResult` contains a valid `chunk_generator` and `get_message_up_to`.
+
+**Verification gate:** Worker synthesizes a known text string. Chunks are 4096 bytes each (except last). `get_message_up_to(0.5)` returns ~50% of the text.
+
+---
+
+## Phase 5: Agent Worker (LangGraph or ADK)
+
+**Choose one based on your requirements:**
+
+### Option A: LangGraphAgentWorker
+
+**File:** `src/workers/langgraph_agent.py`
+
+**Pattern:** `StateGraph` with a single `agent_node`. Always includes `iteration_count` in state (Iron Law from `agentic-ai-dev`). Full response buffered before enqueuing (prevents audio jumping).
+
+**Reference:** `reference/worker-pipeline.md` § LangGraphAgentWorker
+
+**Use when:** LangGraph is already in your stack; you need custom graph logic (tools, multi-step reasoning, HITL checkpoints).
+
+### Option B: ADKAgentWorker
+
+**File:** `src/workers/adk_agent.py`
+
+**Pattern:** `SequentialAgent` wrapping an `LlmAgent`. `InMemorySessionService` for conversation state. `Runner.run_async()` for streaming events.
+
+**Reference:** `reference/worker-pipeline.md` § ADKAgentWorker
+
+**Use when:** Google ADK is already in your stack; you want ADK's built-in session and memory management.
+
+**Unit test (both):** Inject a mock LLM/runner. Send a `Transcription`. Verify an `AgentResponse` appears in output queue with non-empty `text`.
+
+**Verification gate:** Agent generates a response for a test input. `ConversationHistory` has correct entries after response.
+
+---
+
+## Phase 6: Wire Pipeline
+
+**Goal:** `StreamingConversation` orchestrator that connects all workers via queues and manages the WebSocket.
+
+**Files:**
+- `src/conversation.py` — `StreamingConversation`: queues, worker wiring, `_output_loop`, `_send_speech`
+- `src/main.py` — FastAPI app with `asynccontextmanager` lifespan, `/conversation` WebSocket endpoint, `/health` endpoint
+
+**Queue topology:**
+```
+WebSocket recv → transcriber.send_audio()
+transcriber.output_queue → transcription_queue → agent.input_queue
+agent.output_queue → agent_queue → synthesizer.input_queue
+synthesizer.output_queue → synthesis_queue → _output_loop → WebSocket send
+```
+
+**Critical:** Use `asynccontextmanager` lifespan — NEVER `@app.on_event`.
+
+**Reference:** `reference/worker-pipeline.md` § FastAPI WebSocket Server, § StreamingConversation Orchestrator
+
+**Integration test:** Connect a test WebSocket client. Send synthetic PCM silence. Verify pipeline starts without errors. Verify `terminate()` cleans up all workers and tasks.
+
+**Verification gate:** `uvicorn src.main:app --reload` starts cleanly. `/health` returns `{"status": "ok"}`. WebSocket `/conversation` accepts a connection.
+
+---
+
+## Phase 7: Interrupt Handling
+
+**Goal:** Users can interrupt the bot mid-sentence. Pipeline recovers correctly.
+
+**Files to create/update:**
+- `src/interrupt.py` — `InterruptibleEvent` dataclass
+- `src/workers/transcriptions_worker.py` — detects interrupt, flags `Transcription.is_interrupt`
+- `src/conversation.py` — `broadcast_interrupt()`, rate-limited `_send_speech()` with stop check, transcriber mute before delivery
+
+**Steps:**
+1. Add `InterruptibleEvent` with `interrupt()` and `is_interrupted()` methods
+2. Add `TranscriptionsWorker` between transcriber output and agent input — detects new transcription while bot speaks
+3. Implement `broadcast_interrupt()` — drains interruptible event queue, cancels agent task
+4. Update `_send_speech()` to: mute transcriber first, check `stop_event.is_interrupted()` before every chunk, wait `seconds_per_chunk` between chunks, unmute in `finally`
+5. After cutoff: call `agent.history.update_last_bot_on_cutoff(message_sent)`
+
+**Reference:** `reference/interrupt-handling.md` (complete)
+
+**Test the interrupt path:**
+```python
+async def test_interrupt():
+    conversation = create_test_conversation()
+    await conversation.start()
+
+    # Simulate bot speaking
+    synthesis_result = create_mock_synthesis_result(duration_seconds=5)
+    synthesis_task = asyncio.create_task(
+        conversation._send_speech(synthesis_result)
+    )
+
+    # Interrupt after 1 second
+    await asyncio.sleep(1)
+    conversation.broadcast_interrupt()
+
+    message_sent, cut_off = await synthesis_task
+    assert cut_off is True
+    assert len(message_sent) < len(synthesis_result.full_text)
+```
+
+**Verification gate:** Interrupt stops audio delivery within one chunk duration (~85ms). Transcriber unmutes after interrupt. History contains partial message.
+
+---
+
+## Phase 8: Test
+
+**Unit tests (each worker in isolation):**
+- `test_base_worker.py` — queue flow, terminate, error recovery continues
+- `test_gemini_transcriber.py` — mock session, audio sending, mute/unmute
+- `test_gemini_synthesizer.py` — mock API response, chunk generator, get_message_up_to
+- `test_langgraph_agent.py` or `test_adk_agent.py` — mock LLM, history update, cancel task
+- `test_interrupt.py` — InterruptibleEvent, broadcast_interrupt, rate-limited delivery, cutoff detection
+
+**Integration test:**
+- `test_pipeline.py` — full pipeline with mocked Gemini clients; verify audio flows end-to-end
+
+```bash
+pytest -q                              # All tests
+pytest -q tests/test_interrupt.py      # Interrupt path specifically
+pytest -q --cov=src --cov-report=term-missing  # With coverage
+```
+
+**Verification gate:** All tests pass. Interrupt path has test coverage.
+
+---
+
+## Phase 9: Deploy
+
+**Dockerfile (multi-stage):**
+```dockerfile
+FROM python:3.14-slim AS base
+WORKDIR /app
+RUN pip install uv
+
+FROM base AS builder
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+FROM base AS runtime
+COPY --from=builder /app/.venv /app/.venv
+COPY src/ ./src/
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+**Environment variables required at runtime:**
+- `GEMINI_API_KEY` — never in Dockerfile or image
+- `GEMINI_LIVE_MODEL`, `GEMINI_TTS_MODEL`, `GEMINI_TTS_VOICE`
+
+**Health check:** `/health` endpoint — used by Cloud Run and load balancers.
+
+**Production considerations:**
+- Add WebSocket heartbeat (ping every 25s) to prevent proxy timeout
+- Implement Gemini Live session reconnect with exponential backoff
+- Add `structlog` request logging with conversation ID for tracing
+- Rate-limit concurrent WebSocket connections
+
+---
+
+## Checklist Before Shipping
+
+- [ ] Iron Law: every worker has its own `asyncio.Queue` — no direct calls between workers
+- [ ] `google-genai` used throughout — never `google-generativeai`
+- [ ] Gemini Live connected via WebSocket (`aio.live.connect`) — never HTTP polling
+- [ ] Audio format: 16kHz PCM for input, correct MIME type sent
+- [ ] Transcriber muted before bot speaks, unmuted in `finally`
+- [ ] Interrupt check before every audio chunk in `_send_speech`
+- [ ] `asyncio.sleep(seconds_per_chunk)` rate-limits audio delivery
+- [ ] `update_last_bot_on_cutoff()` called after cutoff
+- [ ] Gemini Live reconnect implemented
+- [ ] All `except` blocks log with `structlog` — no silent failures
+- [ ] No `print()` anywhere — structured logging only
+- [ ] `asynccontextmanager` lifespan — no `@app.on_event`
+- [ ] Tests cover happy path and interrupt path
+- [ ] `security-reviewer` run — WebSocket input validated, API key not logged
+
+---
+
+## Common Failure Modes
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| Transcriptions never arrive | Wrong SDK or polling Live API | Use `google-genai`, WebSocket protocol |
+| `INVALID_ARGUMENT` from Gemini | Wrong audio format | 16kHz PCM, `audio/pcm;rate=16000` |
+| Bot hears itself | Transcriber not muted | `transcriber.mute()` before delivery |
+| User can't interrupt | No rate limiting on chunks | `asyncio.sleep(seconds_per_chunk)` |
+| Audio fragments/gaps | Multiple TTS calls | Buffer full response before synthesizing |
+| Pipeline stops after 30 min | Session expired | Implement reconnect in transcriber |
+
+See `reference/common-pitfalls.md` for full details on each.
