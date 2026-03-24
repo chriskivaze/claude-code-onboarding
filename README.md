@@ -6,11 +6,13 @@ This repository is a pre-configured starter kit packed with agents, skills, slas
 
 | Layer | Technologies |
 |---|---|
-| **Backend** | Java 21, Spring Boot WebFlux v3.5.x, Node.js v24.13, NestJS v11.x, Python v3.13 |
-| **Agentic AI** | Python 3.14, LangChain v1.2.8, LangGraph v1.0.7, Google ADK, FastAPI 0.128.x |
-| **Frontend** | Angular 21.x, TypeScript 5.x, A2UI v0.8 (Agent-to-User Interface renderer) |
-| **Mobile** | Flutter 3.38, Dart 3.11 |
-| **Data & Infra** | PostgreSQL, pgvector (vector search), Weaviate Serverless, Firebase |
+| **Frontend** | Vue.js 3.4+, Vite 5+, TypeScript 5.x, Tailwind CSS 3.4+, Pinia, Vue Router 4 |
+| **Backend (Node.js)** | Node.js 20+, NestJS 11.x or Express, TypeScript 5.x, Prisma ORM |
+| **Backend (PHP)** | PHP 8.3+, Laravel 11.x, Eloquent ORM, Inertia.js + Vue (full-stack) |
+| **Backend (Python)** | Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy async |
+| **Agentic AI** | Python 3.12+, LangChain, LangGraph, FastAPI, pgvector + Weaviate |
+| **Mobile** | Flutter 3.x, Dart (cross-platform iOS + Android) |
+| **Data & Infra** | PostgreSQL, Redis, pgvector (vector search), Weaviate Serverless, Firebase |
 | **AI Tooling** | Claude Code, MCP servers |
 
 Clone it, install Claude Code, and start building.
@@ -90,7 +92,7 @@ Clone it, install Claude Code, and start building.
   - [17. Android Google Play Release Pipeline](#17-android-google-play-release-pipeline)
   - [16. Hands-On Exercises](#16-hands-on-exercises)
     - [Exercise 1: Scaffold a Flutter Fitness App](#exercise-1-scaffold-a-flutter-fitness-app)
-    - [Exercise 2: Build a Weather REST API (Java)](#exercise-2-build-a-weather-rest-api-java)
+    - [Exercise 2: Build a Blog API (Laravel + Inertia)](#exercise-2-build-a-blog-api-laravel--inertia)
     - [Exercise 3: Build a Todo API (NestJS)](#exercise-3-build-a-todo-api-nestjs)
     - [Exercise 4: Build an Analytics API (Python)](#exercise-4-build-an-analytics-api-python)
     - [Exercise 5: Design a Full-Stack E-Commerce System](#exercise-5-design-a-full-stack-e-commerce-system)
@@ -181,8 +183,9 @@ Before you begin, make sure you have:
 
 **Optional for Quick Start (required for MCP servers):**
 
-- [Node.js v24+](https://nodejs.org/en/download)
-- [Python v3.13+](https://www.python.org/downloads/)
+- [Node.js v20+](https://nodejs.org/en/download)
+- [PHP 8.3+](https://www.php.net/downloads) + [Composer](https://getcomposer.org/) *(for Laravel)*
+- [Python v3.12+](https://www.python.org/downloads/) *(optional)*
 
 ## 2. Clone This Repo
 
@@ -500,7 +503,7 @@ You're set up. Before diving into components and theory, take Claude Code for a 
 ### Scaffold something
 
 ```
-> /scaffold-spring-api hello-world
+> /scaffold-vue-app hello-world
 ```
 
 Watch how Claude creates the full project structure, files, and boilerplate — all from a single command.
@@ -510,10 +513,11 @@ Or, if you're not sure which scaffold command to use, describe what you want to 
 ```
 > /new-project flutter fitness tracker with Firebase
 > /new-project python REST API for invoices
-> /new-project angular dashboard for analytics
+> /new-project laravel blog with Inertia and Vue
+> /new-project vue dashboard for analytics
 ```
 
-`/new-project` reads your description, maps it to the right tech stack, and routes to the correct scaffold command — including running the Mobile Design checkpoint and plan gate for Flutter projects. Supported stacks: Spring Boot, NestJS, Python/FastAPI, Agentic AI, Angular, Flutter, PostgreSQL schema, vector database.
+`/new-project` reads your description, maps it to the right tech stack, and routes to the correct scaffold command — including running the Mobile Design checkpoint and plan gate for Flutter projects. Supported stacks: Vue + Tailwind, NestJS, Express, Laravel + Inertia, Python/FastAPI, Agentic AI, Flutter, PostgreSQL schema, vector database.
 
 ### Use a sub-agent
 
@@ -1828,13 +1832,12 @@ claude-code-onboarding/
     ├── commands/                          # 13 slash commands (triggered with /name)
     │   │
     │   │  # — Scaffolding —
-    │   ├── scaffold-spring-api.md        # /scaffold-spring-api <name>
+    │   ├── scaffold-vue-app.md           # /scaffold-vue-app <name>
     │   ├── scaffold-nestjs-api.md        # /scaffold-nestjs-api <name>
+    │   ├── scaffold-express-api.md       # /scaffold-express-api <name>
+    │   ├── scaffold-laravel-app.md       # /scaffold-laravel-app <name>
     │   ├── scaffold-python-api.md        # /scaffold-python-api <name>
     │   ├── scaffold-agentic-ai.md        # /scaffold-agentic-ai <name>
-    │   ├── scaffold-google-adk.md        # /scaffold-google-adk <name>
-    │   ├── scaffold-angular-app.md       # /scaffold-angular-app <name>
-    │   ├── scaffold-a2ui.md             # /scaffold-a2ui <name> — A2UI renderer module
     │   ├── scaffold-flutter-app.md       # /scaffold-flutter-app <name>
     │   │
     │   │  # — Design —
@@ -2352,16 +2355,17 @@ Then iterate:
 > Add a dashboard screen showing weekly workout summary with charts
 ```
 
-### Exercise 2: Build a Weather REST API (Java)
+### Exercise 2: Build a Blog API (Laravel + Inertia)
 
 **Components used:** Slash Command → Sub-agent → Skill (auto)
 
-Scaffold first, then use the `@java-spring-api` agent for domain-specific implementation:
+Scaffold first, then use the `@laravel-api` agent for domain-specific implementation:
 
 ```
-> /scaffold-spring-api weather-service
-> @java-spring-api Add a WeatherController that accepts a city name and returns mock weather data with temperature, humidity, and condition
-> Add integration tests for the weather endpoint
+> /scaffold-laravel-app blog
+> @laravel-api Add a PostController with CRUD endpoints, Eloquent model, and form request validation
+> Add Pest feature tests for the create and index endpoints
+> Wire up the Post index page using Inertia.js and a Vue component
 ```
 
 ### Exercise 3: Build a Todo API (NestJS)
@@ -2393,10 +2397,10 @@ Scaffold first, then use the `@java-spring-api` agent for domain-specific implem
 This exercise chains multiple components together — architecture design, database schema, API scaffolding, and implementation:
 
 ```
-> /design-architecture An e-commerce platform with product catalog, shopping cart, checkout, and order tracking. Angular SPA for web, Flutter for mobile, Spring Boot backend.
+> /design-architecture An e-commerce platform with product catalog, shopping cart, checkout, and order tracking. Vue SPA for web, Flutter for mobile, Laravel + Inertia backend.
 > /design-database e-commerce platform with products, categories, users, orders, order items, payments, and shipping
-> /scaffold-spring-api ecommerce-api
-> @java-spring-api Create CRUD endpoints for Products with name, description, price, category, and image URL
+> /scaffold-laravel-app ecommerce
+> @laravel-api Create CRUD endpoints for Products with name, description, price, category, and image URL
 ```
 
 ### Exercise 6: Pull Live Docs with Context7 (MCP)
@@ -2406,8 +2410,9 @@ This exercise chains multiple components together — architecture design, datab
 Append `use context7` to any prompt to fetch up-to-date, version-specific documentation instead of relying on Claude's training data:
 
 ```
-> Create a Spring Boot WebFlux endpoint that uses Spring Security with JWT. use context7
-> Build an Angular component using the new Angular signals API. use context7
+> Build a Vue 3 component using the Composition API with Pinia state management. use context7
+> Create a Laravel 11 route with Sanctum authentication and form request validation. use context7
+> Build an Inertia.js page component with Vue and Laravel controller. use context7
 > Set up Firebase App Check in Flutter. use context7
 > Create a FastAPI endpoint with async SQLAlchemy. use context7
 > Create a NestJS guard with JWT validation using @nestjs/passport. use context7
@@ -3770,10 +3775,11 @@ claude --resume <name>              # Resume named session
 ### Scaffolding
 
 ```
-/scaffold-spring-api <name>         # Java Spring Boot API
+/scaffold-vue-app <name>            # Vue.js + Tailwind SPA
 /scaffold-nestjs-api <name>         # NestJS API
+/scaffold-express-api <name>        # Express API
+/scaffold-laravel-app <name>        # Laravel + Inertia + Vue
 /scaffold-python-api <name>         # Python FastAPI
-/scaffold-angular-app <name>        # Angular SPA
 /scaffold-flutter-app <name>        # Flutter mobile app
 /scaffold-agentic-ai <name>         # AI Agent service
 ```
