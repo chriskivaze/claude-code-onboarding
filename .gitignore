@@ -70,6 +70,9 @@ linked_*.ds
 unlinked.ds
 unlinked_spec.ds
 **/doc/api/
+/peshapay-base
+/peshapay
+/loan-disk
 
 # Flutter repo-specific
 /bin/cache/

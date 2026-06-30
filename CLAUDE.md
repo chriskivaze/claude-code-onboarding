@@ -42,7 +42,15 @@ Consult official docs via MCP before writing ANY code. Zero tolerance for deprec
 
 > Defined in `.claude/rules/core-behaviors.md` (always loaded). Process patterns in `.claude/rules/leverage-patterns.md`.
 >
-> **Rule precedence** (when rules conflict): `core-behaviors` > `code-standards` > `verification-and-reporting` > `leverage-patterns`.
+> **Rule precedence** (when rules conflict): `architecture-guardrails` > `core-behaviors` > `code-standards` > `verification-and-reporting` > `leverage-patterns`.
+
+## Architecture Guardrails (Project-Specific)
+
+> Defined in `.claude/rules/architecture-guardrails.md` (always loaded). Holds rules derived from the current project's architecture — tenancy model, financial integrations, async patterns, security boundaries, deployment topology.
+>
+> Drop-in template: when switching this kit to a new project, replace the file's "Current project" block and rewrite the rules under each section heading using the new architecture. The 12 section areas are universal concerns; the contents are project-specific.
+>
+> **When in doubt about tenancy, money, or sensitive user data — STOP and ask before coding.**
 
 ## Communication
 
